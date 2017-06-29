@@ -6,18 +6,20 @@ const url = require('url')
 
 let win
 
-function createWindow () {
+function createWindow() {
   win = new BrowserWindow({
     width: 569,
     height: 680,
     minWidth: 569,
     minHeight: 680
   })
-  win.loadURL(url.format({
-    pathname: path.join(__dirname, 'html', 'prepare.html'),
-    protocol: 'file',
-    slashes: true
-  }))
+  win.loadURL(
+    url.format({
+      pathname: path.join(__dirname, 'html', 'prepare.html'),
+      protocol: 'file',
+      slashes: true
+    })
+  )
 
   // win.webContents.openDevTools()
 
