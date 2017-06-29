@@ -79,5 +79,6 @@
         "watchdogFile": "watchdog",
         "cronFile": "vrouter-cron"
     },
-    "third_party": "third_party"
+    "third_party": "third_party",
+    "VM_SIZE": 1024
 }
