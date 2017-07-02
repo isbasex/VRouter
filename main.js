@@ -3,7 +3,6 @@
 const { app, BrowserWindow, ipcMain, Tray, nativeImage } = require('electron')
 const path = require('path')
 const url = require('url')
-// const { getTray } = require('./js/tray')
 
 require('electron-reload')(__dirname, {
   electron: path.join(__dirname, 'node_modules', '.bin', 'electron')

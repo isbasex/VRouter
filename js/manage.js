@@ -552,6 +552,9 @@ new Vue({
     btnConsole() {
       return getCurrentWindow().toggleDevTools()
     },
+    btnTray() {
+      app.quit()
+    },
     async btnAbout() {
       $(this.$refs.aboutModal).modal('show')
     },
