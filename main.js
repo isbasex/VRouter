@@ -103,7 +103,6 @@ app.on('ready', () => {
   })
 
   win.webContents.openDevTools()
-
   win.loadURL(`file://${path.join(__dirname, 'html/prepare.html')}`)
 
   // Only close the window on blur if dev tools isn't opened

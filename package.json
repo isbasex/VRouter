@@ -6,7 +6,8 @@
   "scripts": {
     "start": "sudo electron .",
     "test": "mocha test",
-    "build": "build"
+    "build": "build",
+    "daemon": "sudo node daemon.js"
   },
   "author": "icymind (icymindt@gmail.com)",
   "license": "GPL",

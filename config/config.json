@@ -80,6 +80,6 @@
     "cronFile": "vrouter-cron"
   },
   "third_party": "third_party",
-  "logDir": "/var/log/vrouter",
-  "execLogFileName": "exec.log"
+  "logDir": "/tmp",
+  "execLogFileName": "vrouter-exec.log"
 }

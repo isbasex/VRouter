@@ -2,3 +2,4 @@ dist/
 config/config_dev.json
 semantic/
 semantic.json
+daemon.sh
