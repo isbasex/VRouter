@@ -6,6 +6,9 @@ const fs = require('fs-extra')
 const url = require('url')
 const { VRouter } = require('../js/vrouter-local.js')
 const { getAppDir } = require('../js/helper.js')
+const packageJson = require('../package.json')
+
+fs.ensureDirSync(path.join(getAppDir(), packageJson.name))
 
 function redirect() {
   window.location.replace(
@@ -186,9 +189,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   let cfgPath
   let json
   try {
-    cfgPath = path.join(getAppDir(), 'VRouter', 'config.json')
+    cfgPath = path.join(getAppDir(), packageJson.name, 'config.json')
     json = fs.readJsonSync(cfgPath)
   } catch (err) {
+    console.error(err)
     console.log('使用config.json模板')
     cfgPath = path.join(__dirname, '..', 'config', 'config.json')
     json = fs.readJsonSync(cfgPath)

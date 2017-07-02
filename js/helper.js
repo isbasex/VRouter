@@ -6,14 +6,11 @@ const moment = require('moment')
 moment().format()
 
 function getAppDir() {
-  return (
-    process.env.APPDATA ||
-    (process.platform === 'darwin' ? path.join(process.env.HOME, 'Library', 'Application Support') : '/var/local')
-  )
+  return process.env.APPDATA || '/usr/local'
 }
 
 function getVmSizeByGb(size = 1024) {
-  return size * 1024 * 1024 //默认1024G
+  return size * 1024 * 1024
 }
 
 function mkdirIfNotExist(dir) {
