@@ -2,7 +2,7 @@
 /* global Vue alert */
 
 const { VRouter } = require('../js/vrouter-local.js')
-const { app, getCurrentWindow } = require('electron').remote
+const { app, getCurrentWindow, Tray } = require('electron').remote
 const { shell } = require('electron')
 const path = require('path')
 const fs = require('fs-extra')
@@ -10,7 +10,7 @@ const os = require('os')
 
 let vrouter = new VRouter()
 
-const myApp = new Vue({
+new Vue({
   el: '#app',
   data: {
     remote: null,
@@ -47,13 +47,13 @@ const myApp = new Vue({
     errorMsg: ''
   },
   computed: {
-    author () {
+    author() {
       return fs.readJsonSync(path.join(__dirname, '..', 'package.json')).author
     },
-    vrouterVersion () {
+    vrouterVersion() {
       return app.getVersion()
     },
-    circleIcon () {
+    circleIcon() {
       return {
         ui: true,
         circle: true,
@@ -61,7 +61,7 @@ const myApp = new Vue({
         green: this.currentGW === 'vrouter'
       }
     },
-    cubeIcon () {
+    cubeIcon() {
       return {
         ui: true,
         huge: true,
@@ -70,14 +70,14 @@ const myApp = new Vue({
         teal: this.currentGW === 'vrouter'
       }
     },
-    btnToggleRouterIcon () {
+    btnToggleRouterIcon() {
       return {
         pause: this.currentGW === 'vrouter',
         play: this.currentGW !== 'vrouter',
         icon: true
       }
     },
-    ssStatusIcon () {
+    ssStatusIcon() {
       const isRunning = this.ssStatus === '运行中'
       return {
         ui: true,
@@ -88,7 +88,7 @@ const myApp = new Vue({
         icon: true
       }
     },
-    ktStatusIcon () {
+    ktStatusIcon() {
       const isRunning = this.ktStatus === '运行中'
       return {
         ui: true,
@@ -99,31 +99,34 @@ const myApp = new Vue({
         icon: true
       }
     },
-    currentProtocolText () {
+    currentProtocolText() {
       return this.resetProxyChain(false)
       // // const isSS = this.firewall.currentProtocol === 'shadowsocks'
       // // return isSS ? '仅 Shadowsocks' : 'Shadowsocks + kcptun'
     },
-    ktOthers () {
+    ktOthers() {
       let ktKeys = ['address', 'port', 'key', 'crypt', 'mode']
       let others = []
-      Object.keys(this.kcptun).forEach((key) => {
+      Object.keys(this.kcptun).forEach(key => {
         if (!ktKeys.includes(key)) {
           others.push(`${key}=${this.kcptun[key]}`)
         }
       })
       return others.join(';')
     },
-    proxyModeText () {
+    proxyModeText() {
       return this.proxyModeTextDic[this.firewall.currentMode]
     }
   },
   methods: {
-    async btnToggleRouterHandler () {
+    async btnToggleRouterHandler(order) {
+      const VROUTER = 'vrouter'
+      const WIFI = 'wifi'
+
       $('*[data-content]').popup('hide')
       this.activeLoader = true
-      const to = this.currentGW === 'vrouter'
-        ? 'wifi' : 'vrouter'
+
+      const to = typeof order === 'boolean' ? (order ? VROUTER : WIFI) : this.currentGW === VROUTER ? WIFI : VROUTER
       try {
         await vrouter.changeRouteTo(to)
         this.currentGW = to
@@ -136,11 +139,10 @@ const myApp = new Vue({
         this.activeLoader = false
       }
     },
-    async btnMoreHandlerModal () {
-      $(this.$refs.moreModal)
-        .modal('show')
+    async btnMoreHandlerModal() {
+      $(this.$refs.moreModal).modal('show')
     },
-    async btnShutdownHandler () {
+    async btnShutdownHandler() {
       this.activeLoader = true
       try {
         await vrouter.changeRouteTo('wifi')
@@ -154,7 +156,7 @@ const myApp = new Vue({
       }
       app.quit()
     },
-    async btnDeleteHandler () {
+    async btnDeleteHandler() {
       this.activeLoader = true
       try {
         await vrouter.changeRouteTo('wifi')
@@ -167,7 +169,7 @@ const myApp = new Vue({
         this.activeLoader = false
       }
     },
-    async btnResetGW () {
+    async btnResetGW() {
       this.activeLoader = true
       try {
         await vrouter.changeRouteTo('wifi')
@@ -179,17 +181,17 @@ const myApp = new Vue({
         this.activeLoader = false
       }
     },
-    async toggleBlink (blink) {
+    async toggleBlink(blink) {
       const icons = [...this.$el.querySelectorAll('#status-tab .ui.circle.icon')]
       this.blinkIntervals.forEach(intrvl => clearInterval(intrvl))
       this.blinkIntervals.length = 0
       setTimeout(() => {
-        icons.forEach((icon) => {
+        icons.forEach(icon => {
           icon.classList.remove('green')
         })
       }, 2000)
       if (blink) {
-        icons.forEach((icon) => {
+        icons.forEach(icon => {
           const interval = setInterval(() => {
             setTimeout(() => {
               $(icon).transition('pulse')
@@ -200,9 +202,10 @@ const myApp = new Vue({
         })
       }
     },
-    async checkPID () {
-      this.ssStatus = await this.remote.getSSStatus()
-        .then((output) => {
+    async checkPID() {
+      this.ssStatus = await this.remote
+        .getSSStatus()
+        .then(output => {
           if (!output) {
             throw Error('false')
           }
@@ -211,8 +214,9 @@ const myApp = new Vue({
         .catch(() => {
           return Promise.resolve('已停止')
         })
-      this.ktStatus = await this.remote.getKTProcess()
-        .then((output) => {
+      this.ktStatus = await this.remote
+        .getKTProcess()
+        .then(output => {
           if (!output) {
             throw Error('false')
           }
@@ -222,18 +226,19 @@ const myApp = new Vue({
           return Promise.resolve('已停止')
         })
     },
-    async checkVersions () {
+    async checkVersions() {
       this.openwrtVersion = await this.remote.getOpenwrtVersion()
       this.brLanIP = await this.remote.getIP('br-lan')
       this.lanIP = await this.remote.getIP('eth1')
       this.ssVersion = await this.remote.getSSVersion()
       this.ktVersion = await this.remote.getKTVersion()
     },
-    async checkTrafficStatus () {
+    async checkTrafficStatus() {
       const [gw, dns] = await vrouter.getCurrentGateway()
       this.currentGWIP = gw
       this.currentDnsIP = dns
-      if (gw === vrouter.config.vrouter.ip && dns === vrouter.config.vrouter.ip) {
+      const ipInConfig = vrouter.config.vrouter.ip
+      if (gw === ipInConfig && dns === ipInConfig) {
         this.currentGW = 'vrouter'
         this.currentDns = 'vrouter'
       } else {
@@ -243,9 +248,9 @@ const myApp = new Vue({
       const isGWVRouter = this.currentGW === 'vrouter'
       this.btnToggleRouterPopup = isGWVRouter ? '停止接管流量' : '开始接管流量'
       this.btnToggleRouterText = isGWVRouter ? '恢复系统网关' : '启用VRouter网关'
-      this.toggleBlink(isGWVRouter)
+      // this.toggleBlink(isGWVRouter)
     },
-    btnEditHandler () {
+    btnEditHandler() {
       const isDiscards = !this.ssDisabled
       if (isDiscards) {
         this.ssDisabled = true
@@ -264,7 +269,7 @@ const myApp = new Vue({
         this.hideKtPassword = false
       }
     },
-    async saveHandler () {
+    async saveHandler() {
       this.activeLoader = true
       this.ssDisabled = true
       this.ktDisabled = true
@@ -292,8 +297,7 @@ const myApp = new Vue({
           await this.remote.restartKcptun()
         } else {
           await vrouter.disabledService('kcptun')
-          await this.remote.stopKcptun()
-            .catch(e => console.log(e))
+          await this.remote.stopKcptun().catch(e => console.log(e))
         }
         await vrouter.restartCrontab()
 
@@ -310,13 +314,13 @@ const myApp = new Vue({
       }
     },
 
-    toggleSSPassword () {
+    toggleSSPassword() {
       this.hideSSPassword = !this.hideSSPassword
     },
-    toggleKtPassword () {
+    toggleKtPassword() {
       this.hideKtPassword = !this.hideKtPassword
     },
-    resetProxyChain (set = true) {
+    resetProxyChain(set = true) {
       const isSS = this.firewall.currentProtocol === 'shadowsocks'
       const text = isSS ? '仅 Shadowsocks' : 'Shadowsocks + kcptun'
       if (set) {
@@ -324,7 +328,7 @@ const myApp = new Vue({
       }
       return text
     },
-    protocolDropdownHandler (event) {
+    protocolDropdownHandler(event) {
       const selectedText = event.target.innerHTML.trim()
       if (selectedText === '仅 Shadowsocks') {
         this.ktDisabled = true
@@ -334,7 +338,7 @@ const myApp = new Vue({
         this.hideKtPassword = false
       }
     },
-    syncFileds () {
+    syncFileds() {
       let protocolChanged = false
       let shadowsocksChanged = false
       let kcptunChanged = false
@@ -357,7 +361,7 @@ const myApp = new Vue({
 
       const newKt = {}
       let ktOthers = this.$refs.ktOthers.value
-      ktOthers.split(';').forEach((pair) => {
+      ktOthers.split(';').forEach(pair => {
         const kv = pair.split('=')
         newKt[kv[0].trim()] = kv[1].trim()
       })
@@ -372,7 +376,7 @@ const myApp = new Vue({
       if (Object.keys(this.kcptun).length !== Object.keys(newKt).length) {
         kcptunChanged = true
       } else {
-        Object.keys(newKt).forEach((key) => {
+        Object.keys(newKt).forEach(key => {
           if (!kcptunChanged) {
             kcptunChanged = newKt[key] !== this.kcptun[key]
           }
@@ -381,10 +385,10 @@ const myApp = new Vue({
       }
       return { protocolChanged, shadowsocksChanged, kcptunChanged }
     },
-    resetProxyMode () {
+    resetProxyMode() {
       this.$refs.proxyModeText.innerHTML = this.proxyModeTextDic[this.firewall.currentMode]
     },
-    btnProxyModeHandler () {
+    btnProxyModeHandler() {
       if (this.proxyModeDisabled) {
         this.proxyModeDisabled = false
       } else {
@@ -392,7 +396,7 @@ const myApp = new Vue({
         this.resetProxyMode()
       }
     },
-    async refreshInfos () {
+    async refreshInfos() {
       $('*[data-content]').popup('hide')
       this.activeLoader = true
       try {
@@ -406,7 +410,7 @@ const myApp = new Vue({
         this.activeLoader = false
       }
     },
-    async saveProxyModeHandler () {
+    async saveProxyModeHandler() {
       this.proxyModeDisabled = true
       this.activeLoader = true
 
@@ -415,7 +419,7 @@ const myApp = new Vue({
 
       const selectedText = this.$refs.proxyModeText.innerHTML.trim()
       let mode = null
-      Object.keys(this.proxyModeTextDic).forEach((key) => {
+      Object.keys(this.proxyModeTextDic).forEach(key => {
         if (this.proxyModeTextDic[key] === selectedText) {
           mode = key
         }
@@ -423,7 +427,7 @@ const myApp = new Vue({
       this.firewall.currentMode = mode
 
       const blackListRef = ['gfwDomains', 'extraBlackList']
-      blackListRef.forEach((ref) => {
+      blackListRef.forEach(ref => {
         if (this.$refs[ref].checked) {
           blackList[ref] = true
         }
@@ -431,7 +435,7 @@ const myApp = new Vue({
       this.firewall.selectedBL = blackList
 
       const whiteListRef = ['chinaIPs', 'lanNetworks', 'extraWhiteList']
-      whiteListRef.forEach((ref) => {
+      whiteListRef.forEach(ref => {
         if (this.$refs[ref].checked) {
           whiteList[ref] = true
         }
@@ -457,23 +461,23 @@ const myApp = new Vue({
         this.activeLoader = false
       }
     },
-    async restartVrouterNetwork () {
+    async restartVrouterNetwork() {
       this.activeLoader = true
       $('*[data-content]').popup('hide')
       await this.remote.restartNetwork()
       this.activeLoader = false
     },
-    openExtraBlackList () {
+    openExtraBlackList() {
       if (!this.proxyModeDisabled) {
         shell.openItem(path.join(vrouter.config.host.configDir, this.firewall.extraBlackList))
       }
     },
-    openExtraWhiteList () {
+    openExtraWhiteList() {
       if (!this.proxyModeDisabled) {
         shell.openItem(path.join(vrouter.config.host.configDir, this.firewall.extraWhiteList))
       }
     },
-    async updateChinaIPs () {
+    async updateChinaIPs() {
       if (this.proxyModeDisabled) {
         return
       }
@@ -489,7 +493,7 @@ const myApp = new Vue({
         this.activeLoader = false
       }
     },
-    async updateGfwList () {
+    async updateGfwList() {
       if (this.proxyModeDisabled) {
         return
       }
@@ -511,12 +515,12 @@ const myApp = new Vue({
         this.activeLoader = false
       }
     },
-    async guiLogin () {
+    async guiLogin() {
       const cmd = `VBoxManage startvm ${vrouter.config.vrouter.name} --type separate`
       await vrouter.localExec(cmd)
       $(this.$refs.loginModal).modal('hide')
     },
-    async loginVRouter () {
+    async loginVRouter() {
       const applescript = String.raw`
       tell application "Terminal"
           do script ("ssh root@${vrouter.config.vrouter.ip};")
@@ -533,29 +537,30 @@ const myApp = new Vue({
         console.log(err)
       }
     },
-    async loginVRouterModal () {
+    async loginVRouterModal() {
       // alert('登录后请尽量避免修改虚拟机.')
       $('*[data-content]').popup('hide')
       const vueApp = this
       $(this.$refs.loginModal)
         .modal({
-          async onDeny () {
+          async onDeny() {
             await vueApp.loginVRouter()
           }
         })
         .modal('show')
     },
-    btnConsole () {
+    btnConsole() {
       return getCurrentWindow().toggleDevTools()
     },
-    async btnAbout () {
+    async btnAbout() {
       $(this.$refs.aboutModal).modal('show')
     },
-    goToHomepage () {
+    goToHomepage() {
       return shell.openExternal('https://github.com/icymind/VRouter')
     }
   },
-  async mounted () {
+  async mounted() {
+    app.dock.hide()
     try {
       this.remote = await vrouter.connect()
       await this.checkTrafficStatus()
@@ -564,6 +569,21 @@ const myApp = new Vue({
     } catch (err) {
       alert(err)
     }
+    window.addEventListener('online', async () => {
+      const REBOOTING = '检测到网络环境变化，重启路由器内部网络中...'
+      const REBOOT_DONE = '路由器内部网络重启完毕！'
+
+      console.log(REBOOTING)
+      new Notification(REBOOTING)
+
+      await this.remote.restartNetwork()
+      await this.btnToggleRouterHandler(true)
+
+      console.log(REBOOT_DONE)
+      new Notification(REBOOT_DONE)
+    })
+    window.addEventListener('offline', async () => {
+    })
   }
 })
 
