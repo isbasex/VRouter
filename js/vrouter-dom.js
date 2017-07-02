@@ -119,14 +119,14 @@ const checkTrafficStatus = (exports.checkTrafficStatus = async function(vrouter)
     icon.classList.add('play')
     demoDiv.classList.remove('info')
     demoDiv.classList.add('negative')
-    toggleBlink(false)
+    // toggleBlink(false)
   } else {
     toggle.dataset.content = '停止接管网络流量, 但不关闭虚拟机.'
     icon.classList.remove('play')
     icon.classList.add('pause')
     demoDiv.classList.add('info')
     demoDiv.classList.remove('negative')
-    toggleBlink(true)
+    // toggleBlink(true)
   }
   return { dns, gateway, router }
 })
