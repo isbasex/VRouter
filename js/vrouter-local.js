@@ -7,13 +7,14 @@ const https = require('https')
 const fs = require('fs-extra')
 const path = require('path')
 const { VRouterRemote } = require('./vrouter-remote.js')
-const { getAppDir, getVmSize } = require('./helper.js')
+const { getAppDir, logExec } = require('./helper.js')
 const packageJson = require('../package.json')
 const dns = require('dns')
 const crypto = require('crypto')
 const sudo = require('sudo-prompt')
 const { EventEmitter } = require('events')
 const os = require('os')
+const rimraf = require('rimraf')
 
 class VRouter {
   constructor() {
@@ -29,12 +30,16 @@ class VRouter {
     this.config = config
     this.process = new EventEmitter()
     this.remote = null
+    console.log(config)
   }
 
   wait(time) {
     return new Promise(resolve => setTimeout(resolve, time))
   }
+
   sudoExec(cmd) {
+    logExec(cmd, 'sudoExec')
+
     const option = {
       name: 'VRouter'
     }
@@ -50,6 +55,7 @@ class VRouter {
       })
     })
   }
+
   localExec(cmd) {
     // const specialCmd = [
     // /^VBoxManage hostonlyif .*$/ig,
@@ -57,6 +63,8 @@ class VRouter {
     // /^VBoxManage controlvm .* poweroff/ig,
     // /^VBoxManage convertfromraw .ig
     // ]
+
+    logExec(cmd)
 
     return new Promise((resolve, reject) => {
       exec(cmd, (err, stdout, stderr) => {
@@ -70,10 +78,12 @@ class VRouter {
       })
     })
   }
+
   sendKeystrokes(key = '1c 9c') {
     const cmd = `/usr/local/bin/VBoxManage controlvm ${this.config.vrouter.name} keyboardputscancode ${key}`
     return this.localExec(cmd)
   }
+
   async serialExec(cmd, msg) {
     const serialPortState = await this.isSerialPortOn()
 
@@ -133,6 +143,7 @@ class VRouter {
       return Promise.reject(Error(`can not find NetworkService match ${inf}`))
     })
   }
+
   async getCurrentGateway() {
     let networkService
 
@@ -151,6 +162,7 @@ class VRouter {
 
     return Promise.all([
       this.localExec(cmd1).then(output => {
+        output = output.replace(/(\r?\n|\r).+/, '')
         return Promise.resolve((output && output.trim()) || '')
       }),
       this.localExec(cmd2).then(output => {
@@ -196,6 +208,7 @@ class VRouter {
     // https://askubuntu.com/questions/634620/when-using-and-sudo-on-the-first-command-is-the-second-command-run-as-sudo-t
     return this.sudoExec(`bash -c "${cmd1} && ${cmd2}"`)
   }
+
   async buildVM(imagePath, deleteFirst = true) {
     let image = imagePath
     if (!image) {
@@ -207,9 +220,9 @@ class VRouter {
         this.process.emit('build', '使用缓存镜像')
       } else {
         try {
+          this.process.emit('build', '开始下载镜像')
           image = await this.downloadFile(this.config.vrouter.imageUrl)
-          this.process.emit('build', '下载镜像')
-          console.log('download image sucess.')
+          console.log('download image success.')
         } catch (err) {
           this.process.emit('build', '下载失败')
           throw Error(err)
@@ -229,33 +242,42 @@ class VRouter {
       }
     }
     // specify size: 64M
-    const vdiSize = getVmSize()
+    const vdiSize = 67108864
     const subCmds = []
-    const vdi = path.join(this.config.host.configDir, this.config.vrouter.name + '.vdi')
-    await fs.remove(vdi)
+    const { name } = this.config.vrouter
+    const vdiDir = `${process.env.HOME}/VirtualBox VMs/${name}`
+    const vdiPath = `${vdiDir}/${name}.vdi`
+
+    fs.removeSync(vdiPath)
+
+    if (!fs.existsSync(vdiDir)) {
+      fs.mkdirSync(vdiDir)
+    }
+
     subCmds.push(
-      `cat "${image}" | gunzip | ` + `/usr/local/bin/VBoxManage convertfromraw --format VDI stdin "${vdi}" ${vdiSize}`
+      `cat "${image}" | gunzip | ` +
+        `/usr/local/bin/VBoxManage convertfromraw stdin "${vdiPath}" ${vdiSize} --format VDI --variant Fixed`
     )
 
-    subCmds.push(`/usr/local/bin/VBoxManage createvm --name ${this.config.vrouter.name} --register`)
+    subCmds.push(`/usr/local/bin/VBoxManage createvm --name ${name} --register`)
 
     subCmds.push(
-      `/usr/local/bin/VBoxManage modifyvm ${this.config.vrouter.name} ` +
+      `/usr/local/bin/VBoxManage modifyvm ${name} ` +
         ` --ostype "Linux26_64" --memory "256" --cpus "1" ` +
         ` --boot1 "disk" --boot2 "none" --boot3 "none" --boot4 "none" ` +
         ` --audio "none" `
     )
 
     subCmds.push(
-      `/usr/local/bin/VBoxManage storagectl ${this.config.vrouter.name} ` +
+      `/usr/local/bin/VBoxManage storagectl ${name} ` +
         `--name "SATA Controller" --add "sata" --portcount "4" ` +
         `--hostiocache "on" --bootable "on"`
     )
 
     subCmds.push(
-      `/usr/local/bin/VBoxManage storageattach ${this.config.vrouter.name} ` +
+      `/usr/local/bin/VBoxManage storageattach ${name} ` +
         `--storagectl "SATA Controller" --port "1" ` +
-        `--type "hdd" --nonrotational "on" --medium "${vdi}"`
+        `--type "hdd" --nonrotational "on" --medium "${vdiPath}"`
     )
 
     return this.localExec(subCmds.join(' && '))
@@ -320,7 +342,7 @@ class VRouter {
             this.process.emit('build', '安装 dnsmasq-full 以及 ipset')
           })
           .then(() => {
-            return this.wait(30000)
+            return this.wait(20000)
           })
       })
       .then(() => {
@@ -433,8 +455,10 @@ class VRouter {
     const cmd = `/usr/local/bin/VBoxManage import ${vmFile}`
     return this.localExec(cmd)
   }
+
   async deleteVM(stopFirst = false) {
-    const cmd = `/usr/local/bin/VBoxManage unregistervm ${this.config.vrouter.name} --delete`
+    const routerName = this.config.vrouter.name
+    const cmd = `/usr/local/bin/VBoxManage unregistervm ${routerName} --delete`
     const existed = await this.isVRouterExisted()
     if (!existed) {
       return
@@ -444,8 +468,10 @@ class VRouter {
       throw Error('vm must be stopped before delete')
     }
     await this.stopVM('force', 3000)
+
     return this.localExec(cmd)
   }
+
   async startVM(type = 'headless', waitTime = 100) {
     const state = await this.getVMState()
     if (state !== 'running') {
@@ -466,6 +492,7 @@ class VRouter {
         })
     }
   }
+
   async stopVM(action = 'savestate', waitTime = 100) {
     const serialPortState = await this.isSerialPortOn()
     const vmState = await this.getVMState()
@@ -498,6 +525,7 @@ class VRouter {
     const cmd = `/usr/local/bin/VBoxManage setextradata ${this.config.vrouter.name} GUI/HideFromManager ${action}`
     return this.localExec(cmd)
   }
+
   lockGUIConfig(action = true) {
     const cmd = `/usr/local/bin/VBoxManage setextradata ${this.config.vrouter
       .name} GUI/PreventReconfiguration ${action}`
@@ -514,6 +542,7 @@ class VRouter {
         return Promise.resolve(false)
       })
   }
+
   isVRouterExisted() {
     const cmd = '/usr/local/bin/VBoxManage list vms'
     return this.localExec(cmd).then(stdout => {
@@ -525,14 +554,15 @@ class VRouter {
       }
     })
   }
+
   getVMState() {
     // much slow then 'VBoxManage list runningvms'
     const cmd = `/usr/local/bin/VBoxManage showvminfo ${this.config.vrouter.name} --machinereadable | grep VMState=`
     return this.localExec(cmd).then(output => {
-      const state = output.trim().split('=')[1].replace(/"/g, '')
-      return state
+      return output.trim().split('=')[1].replace(/"/g, '')
     })
   }
+
   isVRouterRunning() {
     // State:           running (since 2017-06-16T02:13:09.066000000)
     // VBoxManage showvminfo com.icymind.test --machinereadable  | grep VMState
@@ -552,15 +582,16 @@ class VRouter {
     const cmd = `/sbin/ifconfig ${inf}`
     return this.localExec(cmd).then(output => {
       const ipMatch = /inet (\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}) netmask/gi.exec(output)
-      const ip = (ipMatch && ipMatch[1]) || ''
-      return ip
+      return (ipMatch && ipMatch[1]) || ''
     })
   }
+
   getAllInf() {
     const cmd = '/sbin/ifconfig'
     return this.localExec(cmd)
   }
-  getHostonlyInf() {
+
+  getHostonlyInf() {``
     // return [correspondingInf, firstAvailableInf]
     return this.getAllInf().then(infs => {
       const reg = /^vboxnet\d+.*\n(?:\t.*\n)*/gim
@@ -583,6 +614,7 @@ class VRouter {
       return [correspondingInf, firstAvailableInf]
     })
   }
+
   createHostonlyInf() {
     const cmd = `/usr/local/bin/VBoxManage hostonlyif create`
     return this.localExec(cmd).then(output => {
@@ -590,10 +622,12 @@ class VRouter {
       return infMatch && infMatch[1]
     })
   }
+
   removeHostonlyInf(inf) {
     const cmd = `/usr/local/bin/VBoxManage hostonlyif remove ${inf}`
     return this.localExec(cmd)
   }
+
   async configHostonlyInf(inf, netmask = '255.255.255.0') {
     let iinf = inf
     if (!inf) {
@@ -636,6 +670,7 @@ class VRouter {
           })
       })
   }
+
   async specifyHostonlyAdapter(inf, nic = '1') {
     // VBoxManage modifyvm com.icymind.vrouter --nic1 hostonly --hostonlyadapter1 vboxnet1
     let iinf = inf
@@ -655,6 +690,7 @@ class VRouter {
     }
     await this.localExec(cmd)
   }
+
   async specifyBridgeAdapter(inf, nic = '2') {
     // VBoxManage modifyvm com.icymind.vrouter --nic2 bridged --bridgeadapter1 en0
     let iinf = inf
@@ -712,6 +748,7 @@ class VRouter {
         return inf
       })
   }
+
   isNIC2ConfigedAsBridged() {
     let cmd = `/usr/local/bin/VBoxManage showvminfo ${this.config.vrouter
       .name} --machinereadable | grep 'nic2\\|bridgeadapter2'`
@@ -781,6 +818,7 @@ class VRouter {
       )
     })
   }
+
   async toggleSerialPort(action = 'on', num = 1) {
     const serialPath = path.join(this.config.host.configDir, this.config.host.serialFile)
     const subCmd = action === 'on' ? `"0x3F8" "4" --uartmode${num} server "${serialPath}"` : 'off'
@@ -791,6 +829,7 @@ class VRouter {
     }
     await this.localExec(cmd)
   }
+
   async configVMLanIP() {
     // execute cmd
     const subCmds = []
@@ -808,6 +847,7 @@ class VRouter {
       return this.serialLog('done: changeDnsmasq')
     })
   }
+
   enableService(service) {
     const cmd1 = `chmod +x /etc/init.d/${service} && /etc/init.d/${service} enable`
     // const cmd2 = `/etc/init.d/${service} restart`
@@ -816,10 +856,12 @@ class VRouter {
     // return this.serialExec(cmd2, `start ${service}`)
     // })
   }
+
   disabledService(service) {
     const cmd = `/etc/init.d/${service} disable && /etc/init.d/${service} stop`
     return this.serialExec(cmd, `disable ${service}`)
   }
+
   configWatchdog() {
     const watchdogPath = `${this.config.vrouter.configDir}/${this.config.firewall.watchdogFile}`
     const cronPath = `${this.config.vrouter.configDir}/${this.config.firewall.cronFile}`
@@ -827,10 +869,12 @@ class VRouter {
     const cmd = `chmod +x '${watchdogPath}' && crontab '${cronPath}'`
     return this.serialExec(cmd, 'config watchdog')
   }
+
   restartCrontab() {
     const cmd = '/etc/init.d/cron restart'
     return this.serialExec(cmd)
   }
+
   async changeVMTZ() {
     const cc = String.raw`
         uci set system.@system[0].hostname='VRouter'
@@ -841,15 +885,18 @@ class VRouter {
       return this.serialLog('done: changeVMTZ')
     })
   }
+
   async changeVMPasswd() {
     return this.serialExec("echo -e 'root\\nroot' | (passwd root)", 'change password').then(() => {
       return this.serialLog('done: changeVMPasswd')
     })
   }
+
   serialLog(msg) {
     const cmd = `echo '${msg}' >> /vrouter.log`
     return this.serialExec(cmd, 'log to file')
   }
+
   async installPackage() {
     const subCmds = []
     subCmds.push(`sed -i 's/downloads.openwrt.org/mirrors.tuna.tsinghua.edu.cn\\/openwrt/g' /etc/opkg/distfeeds.conf`)
@@ -867,6 +914,7 @@ class VRouter {
       // don't panic. that's unnecessary to delete a non existed file.
     })
   }
+
   getCfgContent(fileName) {
     const filePath = path.join(this.config.host.configDir, fileName)
     return fs.readFile(filePath, 'utf8').catch(() => {
@@ -876,6 +924,7 @@ class VRouter {
       })
     })
   }
+
   // need fixed. think about global mode.
   async generateIPsets(overwrite = false) {
     const cfgPath = path.join(this.config.host.configDir, this.config.firewall.ipsetsFile)
@@ -964,6 +1013,7 @@ class VRouter {
       })
     })
   }
+
   generateFWRulesHelper(str) {
     return `iptables -t nat -A PREROUTING ${str}\niptables -t nat -A OUTPUT ${str}\n`
   }
@@ -1056,10 +1106,12 @@ class VRouter {
     ws.end()
     return promise
   }
+
   getDNSServer() {
     const dnsmasq = '53'
     return [`127.0.0.1#${dnsmasq}`, `127.0.0.1#${this.config.shadowsocks.dnsPort}`]
   }
+
   async generateDnsmasqCf(overwrite = false) {
     // const mode = m || this.config.firewall.currentMode
     const DNSs = this.getDNSServer()
@@ -1128,6 +1180,7 @@ class VRouter {
     ws.end()
     return promise
   }
+
   generateCronJob() {
     const cfgPath = path.join(this.config.host.configDir, this.config.firewall.cronFile)
     const content = `* * * * * ${this.config.vrouter.configDir}/${this.config.firewall.watchdogFile}\n`
@@ -1135,6 +1188,7 @@ class VRouter {
       return Promise.resolve(cfgPath)
     })
   }
+
   generateWatchdog(p) {
     const protocol = p || this.config.firewall.currentProtocol
     const cfgPath = path.join(this.config.host.configDir, this.config.firewall.watchdogFile)
@@ -1163,6 +1217,7 @@ fi
       return Promise.resolve(cfgPath)
     })
   }
+
   generateService(type = 'shadowsocks') {
     const cfgPath = path.join(
       this.config.host.configDir,
@@ -1211,6 +1266,7 @@ stop() {
       return Promise.resolve(cfgPath)
     })
   }
+
   async generateConfig(type = 'shadowsocks') {
     if (type === 'shadowsocks') {
       const cfgs = ['ss-client', 'ss-overKt', 'ss-dns']
@@ -1223,6 +1279,7 @@ stop() {
       await this.generateConfigHeler('kcptun')
     }
   }
+
   generateConfigHeler(type = 'ss-client') {
     let cfg
     let content
@@ -1320,6 +1377,7 @@ stop() {
         })
     })
   }
+
   async hashFile(file) {
     try {
       const stats = await fs.stat(file)
@@ -1348,6 +1406,7 @@ stop() {
     const cfgPath = path.join(this.config.host.configDir, 'config.json')
     return fs.writeJson(cfgPath, this.config)
   }
+
   scp(src, dst) {
     let dest = dst || this.config.vrouter.configDir
     const opt = {
@@ -1366,6 +1425,7 @@ stop() {
       })
     })
   }
+
   copyTemplate(fileName) {
     const template = path.join(__dirname, '..', 'config', fileName)
     const dest = path.join(this.config.host.configDir, fileName)
@@ -1381,6 +1441,7 @@ stop() {
         })
       })
   }
+
   async scpConfig(type = 'shadowsocks') {
     switch (type) {
       case 'ssService':
@@ -1442,6 +1503,7 @@ stop() {
         break
     }
   }
+
   async scpConfigAll() {
     const types = [
       'ssService',
@@ -1458,6 +1520,7 @@ stop() {
       await this.scpConfig(types[i])
     }
   }
+
   connect(startFirst) {
     return this.getVMState()
       .then(state => {
