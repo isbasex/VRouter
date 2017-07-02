@@ -7,32 +7,36 @@ const url = require('url')
 const { VRouter } = require('../js/vrouter-local.js')
 const { getAppDir } = require('../js/helper.js')
 
-function redirect () {
-  window.location.replace(url.format({
-    pathname: path.join(__dirname, '../html/index.html'),
-    protocol: 'file',
-    slashes: true
-  }))
+function redirect() {
+  window.location.replace(
+    url.format({
+      pathname: path.join(__dirname, '../html/index.html'),
+      protocol: 'file',
+      slashes: true
+    })
+  )
 }
-function adjustModal () {
+function adjustModal() {
   const win = getCurrentWindow()
   const size = win.getSize()
   win.setSize(size[0], size[1] + 1)
   win.setSize(size[0], size[1])
 }
 
-function buildVmListener (msg) {
+function buildVmListener(msg) {
   vue.data.content += `<li class="ui">${msg}</li>`
   adjustModal()
 }
-async function buildVmHandler (vrouter) {
-  vue.data.buttons = [{
-    label: '终止',
-    async handler () {
-      await vrouter.deleteVM(true)
-      app.quit()
+async function buildVmHandler(vrouter) {
+  vue.data.buttons = [
+    {
+      label: '终止',
+      async handler() {
+        await vrouter.deleteVM(true)
+        app.quit()
+      }
     }
-  }]
+  ]
   vrouter.process.on('build', buildVmListener)
   vue.data.header = '构建虚拟机'
   vue.data.content = ''
@@ -47,14 +51,14 @@ async function buildVmHandler (vrouter) {
     vue.data.buttons = [
       {
         label: '重试',
-        async handler () {
+        async handler() {
           vrouter.process.removeListener('build', buildVmListener)
           return buildVmHandler(vrouter)
         }
       },
       {
         label: '退出',
-        async handler () {
+        async handler() {
           await vrouter.deleteVM(true)
           app.quit()
         }
@@ -88,25 +92,24 @@ const vue = new Vue({
     }
   },
   methods: {
-    show () {
+    show() {
       $(`#${this.$el.id} .ui.modal`)
-      .modal({
-        // dimmerSettings: {
+        .modal({
+          // dimmerSettings: {
           // opacity: 0.2
-        // },
-        closable: this.$data.data.closable,
-        detachable: false
-      })
-      .modal('show')
+          // },
+          closable: this.$data.data.closable,
+          detachable: false
+        })
+        .modal('show')
     },
-    hide () {
-      $(`#${this.$el.id} .ui.modal`)
-        .modal('hide')
+    hide() {
+      $(`#${this.$el.id} .ui.modal`).modal('hide')
     }
   }
 })
 
-async function checkRequirement (vrouter) {
+async function checkRequirement(vrouter) {
   let ret = await vrouter.isVBInstalled()
   if (!ret) {
     vue.data = {
@@ -115,14 +118,14 @@ async function checkRequirement (vrouter) {
       buttons: [
         {
           label: '重新检测',
-          handler () {
+          handler() {
             vue.hide()
             return checkRequirement(vrouter)
           }
         },
         {
           label: '退出',
-          handler () {
+          handler() {
             app.quit()
           }
         }
@@ -134,20 +137,20 @@ async function checkRequirement (vrouter) {
   }
   ret = await vrouter.isVRouterExisted()
   if (!ret) {
-  // if (true) {
+    // if (true) {
     vue.data = {
       header: '检测虚拟机',
       content: '没有检测到 VRouter 虚拟机, 需要下载 openwrt 官方镜像(5MB)进行构建.',
       buttons: [
         {
           label: '下载并构建',
-          async handler () {
+          async handler() {
             await buildVmHandler(vrouter)
           }
         },
         {
           label: '退出',
-          handler () {
+          handler() {
             app.quit()
           }
         }
