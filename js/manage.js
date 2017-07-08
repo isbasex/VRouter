@@ -585,8 +585,7 @@ new Vue({
       console.log(REBOOT_DONE)
       new Notification(REBOOT_DONE)
     })
-    window.addEventListener('offline', async () => {
-    })
+    window.addEventListener('offline', async () => {})
   }
 })
 

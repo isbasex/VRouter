@@ -7,7 +7,7 @@
     "start": "sudo electron .",
     "test": "mocha test",
     "build": "build",
-    "daemon": "sudo node daemon.js"
+    "daemon": "sudo node daemon.js && launchctl load /Library/LaunchDaemons/vrouter.plist"
   },
   "author": "icymind (icymindt@gmail.com)",
   "license": "GPL",
