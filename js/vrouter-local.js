@@ -336,7 +336,7 @@ EOF`
       await remote.installKt()
       await this.serialLog('done: installKt')
       this.process.emit('build', '安装 kcptun')
-      if (this.config.firewall.currentProxies.includes('Kt')) {
+      if (this.config.profiles.profiles[this.config.profiles.activedProfile].proxies.includes('Kt')) {
         await this.enableService('kcptun')
         this.process.emit('build', '设置 kcptun 随虚拟机启动')
         await this.serialLog('done: enable kcptun')
@@ -345,7 +345,7 @@ EOF`
       await remote.installSs()
       this.process.emit('build', '安装 shadowsocks')
       await this.serialLog('done: install SS')
-      const p = this.config.firewall.currentProxies
+      const p = this.config.profiles.profiles[this.config.profiles.activedProfile].proxies
       if (p === 'ss' || p === 'ssKt') {
         await this.enableService('shadowsocks')
         this.process.emit('build', '设置 shadowsocks 随虚拟机启动')
@@ -355,7 +355,7 @@ EOF`
       await remote.installSsr()
       this.process.emit('build', '安装 shadowsocksr')
       await this.serialLog('done: install ssr')
-      if (this.config.firewall.currentProxies.includes('ssr')) {
+      if (this.config.profiles.profiles[this.config.profiles.activedProfile].proxies.includes('ssr')) {
         await this.enableService('shadowsocksr')
         this.process.emit('build', '设置 shadowsocksr 随虚拟机启动')
         await this.serialLog('done: enable ssr')
@@ -431,6 +431,7 @@ EOF`
     return this.localExec(cmd)
   }
   async deletevm (stopFirst = false) {
+    await this.removeNwWatchdog()
     const cmd = `${VBoxManage} unregistervm ${this.config.vrouter.name} --delete`
     const existed = await this.isVRouterExisted()
     if (!existed) {
@@ -440,7 +441,7 @@ EOF`
     if (state === 'running' && !stopFirst) {
       throw Error('vm must be stopped before delete')
     }
-    await this.stopvm('poweroff', 3000)
+    await this.stopvm('force', 3000)
     return this.localExec(cmd)
   }
   async startvm (type = 'headless', waitTime = 100) {
@@ -611,13 +612,12 @@ EOF`
   }
   async specifyBridgeAdapter (inf, nic = '2') {
     // VBoxManage modifyvm com.icymind.vrouter --nic2 bridged --bridgeadapter1 en0
-    let service
+    let service = 'Wi-Fi'
     if (!inf) {
       try {
         let info = await this.getActiveAdapter()
         service = info[0]
       } catch (error) {
-        service = 'Wi-Fi'
       }
     }
 
@@ -632,7 +632,7 @@ EOF`
       ` --nictype${nic} "82540EM" ` +
       `--bridgeadapter${nic} "${iinf.replace(/["']/g, '')}" ` +
       `--cableconnected${nic} "on" ` +
-      `--macaddress${nic} "080027a8b841"`
+      `--macaddress${nic} "${this.config.vrouter.macaddress}"`
     const vmState = await this.getvmState()
     if (vmState !== 'poweroff') {
       return Promise.reject(Error('vm must be shutdown before modify'))
@@ -840,6 +840,8 @@ EOF`
     }
   }
   async generateIPsets (overwrite = false) {
+    const profile = this.config.profiles.profiles[this.config.profiles.activedProfile]
+
     const cfgPath = path.join(this.config.host.configDir, this.config.firewall.ipsetsFile)
     const stats = await fs.stat(cfgPath)
       .catch(() => null)
@@ -863,7 +865,7 @@ EOF`
 
     // "selectedBL": {"gfwDomains":true, "extraBlackList":true},
     // "selectedWL": {"chinaIPs":true, "lanNetworks":true, "extraWhiteList":true},
-    if (this.config.firewall.selectedWL.lanNetworks) {
+    if (profile.selectedWL.lanNetworks) {
       winston.debug(`getCfgContent: ${this.config.firewall.lanNetworks}`)
       const lan = await this.getCfgContent(this.config.firewall.lanNetworks)
       lan.split('\n').forEach((line) => {
@@ -874,7 +876,7 @@ EOF`
       })
     }
 
-    if (this.config.firewall.selectedWL.chinaIPs) {
+    if (profile.selectedWL.chinaIPs) {
       const chinaIPs = await this.getCfgContent(this.config.firewall.chinaIPs)
       chinaIPs.split('\n').forEach((line) => {
         const trimLine = line.trim()
@@ -884,7 +886,7 @@ EOF`
       })
     }
 
-    if (this.config.firewall.selectedWL.extraWhiteList) {
+    if (profile.selectedWL.extraWhiteList) {
       const extraList = await this.getCfgContent(this.config.firewall.extraWhiteList)
       extraList.split('\n').forEach((line) => {
         const trimLine = line.trim()
@@ -897,7 +899,7 @@ EOF`
       })
     }
 
-    if (this.config.firewall.selectedBL.extraBlackList) {
+    if (profile.selectedBL.extraBlackList) {
       // add extra_blocked_ips to blacklist_ipset
       const extraList = await this.getCfgContent(this.config.firewall.extraBlackList)
       extraList.split('\n').forEach((line) => {
@@ -916,13 +918,14 @@ EOF`
   }
 
   getServerIP (proxy = 'shadowsocks') {
-    const cfg = this.config[proxy]
+    const profile = this.config.profiles.profiles[this.config.profiles.activedProfile]
+    const cfg = profile[proxy]
     const ipPatthen = /^\d+.\d+.\d+.\d+$/ig
-    if (ipPatthen.test(cfg.server.address)) {
-      return Promise.resolve(cfg.server.address)
+    if (ipPatthen.test(cfg.address)) {
+      return Promise.resolve(cfg.address)
     }
     return new Promise((resolve, reject) => {
-      dns.lookup(cfg.server.address, { family: 4 }, (err, address, family) => {
+      dns.lookup(cfg.address, { family: 4 }, (err, address, family) => {
         if (err) reject(err)
         resolve(address)
       })
@@ -934,8 +937,9 @@ EOF`
   // files
   async generateFWRules (m, p, overwrite = false) {
     // whitelist/blacklist/global/none
-    const proxies = p || this.config.firewall.currentProxies
-    const mode = m || this.config.firewall.currentMode
+    const proxies = p || this.config.profiles.profiles[this.config.profiles.activedProfile].proxies
+    const mode = m || this.config.profiles.profiles[this.config.profiles.activedProfile].mode
+
     const cfgPath = path.join(this.config.host.configDir, this.config.firewall.firewallFile)
 
     const stats = await fs.stat(cfgPath)
@@ -994,9 +998,9 @@ EOF`
     ws.write(`/usr/sbin/ipset restore -f -! ${this.config.vrouter.configDir}/${this.config.firewall.ipsetsFile} &> /dev/null\n`)
 
     // if kcp protocol: speedup ssh
-    // if (this.config.firewall.currentProxies.includes('Kt') && this.config.server.sshPort) {
+    // if (this.config.profiles.profiles[this.config.profiles.activedProfile].proxies.includes('Kt') && this.config.server.sshPort) {
     /*
-     * if (this.config.firewall.currentProxies.includes('Kt')) {
+     * if (this.config.profiles.profiles[this.config.profiles.activedProfile].proxies.includes('Kt')) {
      *   ws.write('# speedup ssh connection if current proxy is kcptun\n')
      *   serverIPs.forEach((ip) => {
      *     // const rule = `-d ${ssServerIP} -p tcp --dport ${this.config.server.sshPort} -j REDIRECT --to-port ${redirPort}`
@@ -1063,7 +1067,7 @@ EOF`
     ]
   }
   async generateDnsmasqCf (overwrite = false) {
-    // const mode = m || this.config.firewall.currentMode
+    const profile = this.config.profiles.profiles[this.config.profiles.activedProfile]
     const DNSs = this.getDNSServer()
     const cfgPath = path.join(this.config.host.configDir, this.config.firewall.dnsmasqFile)
 
@@ -1083,17 +1087,17 @@ EOF`
       })
     })
 
-    if (this.config.firewall.currentMode === 'none') {
+    if (this.config.profiles.profiles[this.config.profiles.activedProfile].mode === 'none') {
       ws.write('# stay in wall\n')
       ws.end()
       return promise
     }
-    if (this.config.firewall.selectedBL.gfwDomains) {
+    if (profile.selectedBL.gfwDomains) {
       const gfwDomains = await this.getCfgContent(this.config.firewall.gfwDomains)
       gfwDomains.split('\n').forEach((line) => {
         const trimLine = line.trim()
         if (!/^#/ig.test(trimLine) && !/^$/ig.test(trimLine)) {
-          if (this.config.firewall.enableTunnelDns) {
+          if (profile.enableTunnelDns) {
             ws.write(`server=/${trimLine}/${DNSs[1]}\n`)
           }
           ws.write(`ipset=/${trimLine}/${this.config.firewall.ipsets.black}\n`)
@@ -1101,7 +1105,7 @@ EOF`
       })
     }
 
-    if (this.config.firewall.selectedBL.extraBlackList) {
+    if (profile.selectedBL.extraBlackList) {
       // add extra_blocked_ips to blacklist_ipset
       const extraList = await this.getCfgContent(this.config.firewall.extraBlackList)
       extraList.split('\n').forEach((line) => {
@@ -1109,7 +1113,7 @@ EOF`
         if (!/^#/ig.test(trimLine) && !/^$/ig.test(trimLine)) {
           const ip = /^\d+\.\d+\.\d+\.\d+$/g
           if (!ip.test(trimLine)) {
-            if (this.config.firewall.enableTunnelDns) {
+            if (profile.enableTunnelDns) {
               ws.write(`server=/${trimLine}/${DNSs[1]}\n`)
             }
             ws.write(`ipset=/${trimLine}/${this.config.firewall.ipsets.black}\n`)
@@ -1118,7 +1122,7 @@ EOF`
       })
     }
 
-    if (this.config.firewall.selectedWL.extraWhiteList) {
+    if (profile.selectedWL.extraWhiteList) {
       const extraList = await this.getCfgContent(this.config.firewall.extraWhiteList)
       extraList.split('\n').forEach((line) => {
         const trimLine = line.trim()
@@ -1142,7 +1146,7 @@ EOF`
     return cfgPath
   }
   async generateWatchdog (p) {
-    const proxies = p || this.config.firewall.currentProxies
+    const proxies = p || this.config.profiles.profiles[this.config.profiles.activedProfile].proxies
     const cfgPath = path.join(this.config.host.configDir, this.config.firewall.watchdogFile)
     let content = '#!/bin/sh\n'
     const tunnelBinName = proxies.substr(0, 3) === 'ssr' ? 'sr-tunnel' : 's-tunnel'
@@ -1178,7 +1182,8 @@ EOF`
           /etc/init.d/${this.config.kcptun.service} restart
       fi
       `
-    if (this.config.firewall.enableTunnelDns) {
+    const profile = this.config.profiles.profiles[this.config.profiles.activedProfile]
+    if (profile.enableTunnelDns) {
       content += tunnelDns
     }
     if (proxies.includes('Kt')) {
@@ -1204,7 +1209,7 @@ EOF`
     let content = ''
     switch (type) {
       case 'tunnelDns':
-        const tunnelBinName = this.config.firewall.currentProxies.includes('ssr') ? 'ssr-tunnel' : 'ss-tunnel'
+        const tunnelBinName = this.config.profiles.profiles[this.config.profiles.activedProfile].proxies.includes('ssr') ? 'ssr-tunnel' : 'ss-tunnel'
         content = String.raw`#!/bin/sh /etc/rc.common
           # Copyright (C) 2006-2011 OpenWrt.org
           START=85
@@ -1230,7 +1235,7 @@ EOF`
           SERVICE_WRITE_PID=1
           SERVICE_DAEMONIZE=1
           start() {
-              ${this.config.firewall.currentProxies.includes('Kt') ? overKt : noKt}
+              ${this.config.profiles.profiles[this.config.profiles.activedProfile].proxies.includes('Kt') ? overKt : noKt}
           }
           stop() {
               service_stop /usr/bin/${binName}
@@ -1262,13 +1267,13 @@ EOF`
     switch (type) {
       case 'shadowsocks':
         cfgs.push(this.config.shadowsocks.client)
-        if (this.config.firewall.currentProxies.includes('Kt')) {
+        if (this.config.profiles.profiles[this.config.profiles.activedProfile].proxies.includes('Kt')) {
           cfgs.push(this.config.shadowsocks.overKt)
         }
         break
       case 'shadowsocksr':
         cfgs.push(this.config.shadowsocksr.client)
-        if (this.config.firewall.currentProxies.includes('Kt')) {
+        if (this.config.profiles.profiles[this.config.profiles.activedProfile].proxies.includes('Kt')) {
           cfgs.push(this.config.shadowsocksr.overKt)
         }
         break
@@ -1292,28 +1297,29 @@ EOF`
     let cfg
     let fastopen
     let content = {}
+    const profile = this.config.profiles.profiles[this.config.profiles.activedProfile]
     switch (type) {
       case this.config.shadowsocks.client:
         cfg = this.config.shadowsocks.client
-        fastopen = this.config.shadowsocks.server.fastopen
+        fastopen = profile.shadowsocks.fastopen
         if (typeof fastopen === 'string') {
           fastopen = fastopen === 'true'
         }
         content = {
-          'server': this.config.shadowsocks.server.address,
-          'server_port': parseInt(this.config.shadowsocks.server.port),
+          'server': profile.shadowsocks.address,
+          'server_port': parseInt(profile.shadowsocks.port),
           'local_address': '0.0.0.0',
           'local_port': parseInt(this.config.shadowsocks.clientPort),
-          'password': this.config.shadowsocks.server.password,
-          'timeout': parseInt(this.config.shadowsocks.server.timeout),
-          'method': this.config.shadowsocks.server.method,
+          'password': profile.shadowsocks.password,
+          'timeout': parseInt(profile.shadowsocks.timeout),
+          'method': profile.shadowsocks.method,
           'fast_open': fastopen,
           'mode': 'tcp_only'
         }
         break
       case this.config.shadowsocks.overKt:
         cfg = this.config.shadowsocks.overKt
-        fastopen = this.config.shadowsocks.server.fastopen
+        fastopen = profile.shadowsocks.fastopen
         if (typeof fastopen === 'string') {
           fastopen = fastopen === 'true'
         }
@@ -1322,35 +1328,35 @@ EOF`
           'server_port': parseInt(this.config.kcptun.clientPort),
           'local_address': '0.0.0.0',
           'local_port': parseInt(this.config.shadowsocks.overKtPort),
-          'password': this.config.shadowsocks.server.password,
+          'password': profile.shadowsocks.password,
           'timeout': 20,
-          'method': this.config.shadowsocks.server.method,
+          'method': profile.shadowsocks.method,
           'fast_open': fastopen,
           'mode': 'tcp_only'
         }
         break
       case this.config.shadowsocksr.client:
         cfg = this.config.shadowsocksr.client
-        fastopen = this.config.shadowsocksr.server.fastopen
+        fastopen = profile.shadowsocksr.fastopen
         if (typeof fastopen === 'string') {
           fastopen = fastopen === 'true'
         }
         content = {
-          'server': this.config.shadowsocksr.server.address,
-          'server_port': parseInt(this.config.shadowsocksr.server.port),
+          'server': profile.shadowsocksr.address,
+          'server_port': parseInt(profile.shadowsocksr.port),
           'local_address': '0.0.0.0',
           'local_port': parseInt(this.config.shadowsocksr.clientPort),
-          'password': this.config.shadowsocksr.server.password,
-          'timeout': parseInt(this.config.shadowsocksr.server.timeout),
-          'method': this.config.shadowsocksr.server.method,
+          'password': profile.shadowsocksr.password,
+          'timeout': parseInt(profile.shadowsocksr.timeout),
+          'method': profile.shadowsocksr.method,
           'fast_open': fastopen,
           'mode': 'tcp_only',
-          'protocol': this.config.shadowsocksr.server.protocol,
-          'protocol_param': this.config.shadowsocksr.server.protocol_param,
-          'obfs': this.config.shadowsocksr.server.obfs,
-          'obfs_param': this.config.shadowsocksr.server.obfs_param
+          'protocol': profile.shadowsocksr.protocol,
+          'protocol_param': profile.shadowsocksr.protocol_param,
+          'obfs': profile.shadowsocksr.obfs,
+          'obfs_param': profile.shadowsocksr.obfs_param
         }
-        this.config.shadowsocksr.server.others.split(';').forEach((kv) => {
+        profile.shadowsocksr.others.split(';').forEach((kv) => {
           if (kv.trim()) {
             const [k, v] = kv.split('=')
             content[k.trim()] = v.trim()
@@ -1359,7 +1365,7 @@ EOF`
         break
       case this.config.shadowsocksr.overKt:
         cfg = this.config.shadowsocksr.overKt
-        fastopen = this.config.shadowsocksr.server.fastopen
+        fastopen = profile.shadowsocksr.fastopen
         if (typeof fastopen === 'string') {
           fastopen = fastopen === 'true'
         }
@@ -1368,17 +1374,17 @@ EOF`
           'server_port': parseInt(this.config.kcptun.clientPort),
           'local_address': '0.0.0.0',
           'local_port': parseInt(this.config.shadowsocksr.overKtPort),
-          'password': this.config.shadowsocksr.server.password,
+          'password': profile.shadowsocksr.password,
           'timeout': 20,
-          'method': this.config.shadowsocksr.server.method,
+          'method': profile.shadowsocksr.method,
           'fast_open': fastopen,
           'mode': 'tcp_only',
-          'protocol': this.config.shadowsocksr.server.protocol,
-          'protocol_param': this.config.shadowsocksr.server.protocol_param,
-          'obfs': this.config.shadowsocksr.server.obfs,
-          'obfs_param': this.config.shadowsocksr.server.obfs_param
+          'protocol': profile.shadowsocksr.protocol,
+          'protocol_param': profile.shadowsocksr.protocol_param,
+          'obfs': profile.shadowsocksr.obfs,
+          'obfs_param': profile.shadowsocksr.obfs_param
         }
-        this.config.shadowsocksr.server.others.split(';').forEach((kv) => {
+        profile.shadowsocksr.others.split(';').forEach((kv) => {
           if (kv.trim()) {
             const [k, v] = kv.split('=')
             content[k.trim()] = v.trim()
@@ -1387,20 +1393,20 @@ EOF`
         break
       case this.config.tunnelDns.dns:
         cfg = this.config.tunnelDns.dns
-        const isSsr = this.config.firewall.currentProxies.includes('ssr')
-        const obj = isSsr ? this.config.shadowsocksr : this.config.shadowsocks
-        fastopen = obj.server.fastopen
+        const isSsr = profile.proxies.includes('ssr')
+        const server = isSsr ? profile.shadowsocksr : profile.shadowsocks
+        fastopen = server.fastopen
         if (typeof fastopen === 'string') {
           fastopen = fastopen === 'true'
         }
         content = {
-          'server': obj.server.address,
-          'server_port': parseInt(obj.server.port),
+          'server': server.address,
+          'server_port': parseInt(server.port),
           'local_address': '0.0.0.0',
           'local_port': parseInt(this.config.tunnelDns.dnsPort),
-          'password': obj.server.password,
-          'timeout': parseInt(obj.server.timeout),
-          'method': obj.server.method,
+          'password': server.password,
+          'timeout': parseInt(server.timeout),
+          'method': server.method,
           'fast_open': fastopen,
           'tunnel_address': '8.8.8.8:53',
           'mode': 'udp_only'
@@ -1408,9 +1414,9 @@ EOF`
         if (isSsr) {
           const moreFields = ['protocol', 'protocol_param', 'obfs', 'obfs_param']
           moreFields.forEach((field) => {
-            content[field] = obj.server[field]
+            content[field] = server[field]
           })
-          obj.server.others.split(';').forEach((kv) => {
+          server.others.split(';').forEach((kv) => {
             if (kv.trim()) {
               const [k, v] = kv.split('=')
               content[k.trim()] = v.trim()
@@ -1421,13 +1427,13 @@ EOF`
       case this.config.kcptun.client:
         cfg = this.config.kcptun.client
         content = {
-          'remoteaddr': `${this.config.kcptun.server.address}:${this.config.kcptun.server.port}`,
+          'remoteaddr': `${profile.kcptun.address}:${profile.kcptun.port}`,
           'localaddr': `:${this.config.kcptun.clientPort}`,
-          'key': this.config.kcptun.server.key,
-          'crypt': this.config.kcptun.server.crypt,
-          'mode': this.config.kcptun.server.mode
+          'key': profile.kcptun.key,
+          'crypt': profile.kcptun.crypt,
+          'mode': profile.kcptun.mode
         }
-        this.config.kcptun.server.others.split(';').forEach((kv) => {
+        profile.kcptun.others.split(';').forEach((kv) => {
           if (kv.trim()) {
             const [k, v] = kv.split('=')
             const value = v.trim().replace(/"/g, '')
@@ -1475,9 +1481,9 @@ EOF`
         <key>RunAtLoad</key>
         <true/>
         <key>StandardErrorPath</key>
-        <string>${path.join(this.config.host.configDir, path.basename(this.config.host.networkSh, '.sh') + '.log')}</string>
+        <string>${path.join(os.tmpdir(), path.basename(this.config.host.networkSh, '.sh') + '.log')}</string>
         <key>StandardOutPath</key>
-        <string>${path.join(this.config.host.configDir, path.basename(this.config.host.networkSh, '.sh') + '.log')}</string>
+        <string>${path.join(os.tmpdir(), path.basename(this.config.host.networkSh, '.sh') + '.log')}</string>
       </dict>
     </plist>`
 
@@ -1617,10 +1623,9 @@ echo ""`
     const cfgPath = path.join(this.config.host.configDir, 'config.json')
     return fs.writeJson(cfgPath, this.config, {spaces: 2})
   }
-  async upgradeCfg () {
-    const template = path.join(__dirname, '..', 'config', 'config.json')
-    const newCfg = fs.readJsonSync(template)
-    // const oldCfg = fs.readJsonSync(path.join(this.config.host.configDir, 'config.json'))
+  async upgradeCfgV1 (newCfg) {
+    // const template = path.join(__dirname, '..', 'config', 'config.json')
+    // const newCfg = fs.readJsonSync(template)
     if (this.config.version === newCfg.version) {
       return
     }
@@ -1660,10 +1665,67 @@ echo ""`
       await remote.service('shadowsocks', 'stop').catch(() => {})
       await remote.service('kcptun', 'stop').catch(() => {})
       await remote.remoteExec('rm /etc/com.icymind.vrouter/ss-dns.json').catch(() => {})
-      await remote.changeProxies()
+      // await remote.changeProxies()
       await remote.closeConn()
     }
-    return this.saveCfg2File()
+  }
+  async upgradeCfgV2 (newCfg) {
+    // const template = path.join(__dirname, '..', 'config', 'config.json')
+    // const newCfg = fs.readJsonSync(template)
+    if (this.config.version === '0.2') {
+      const profiles = []
+      // 如果ss地址不是123123...拷贝到newCfg
+      // 同理ssr/kcptun
+      const oldSS = this.config.shadowsocks.server
+      const oldSSR = this.config.shadowsocksr.server
+      const oldKT = this.config.kcptun.server
+      if (oldSS.address && oldSS.address !== '123.123.123.123') {
+        const profile = {
+          'name': '配置oo',
+          'mode': 'whitelist',
+          'proxies': 'ss',
+          'relayUDP': false,
+          'enableTunnelDns': true,
+          'selectedBL': {'gfwDomains': true, 'extraBlackList': true},
+          'selectedWL': {'chinaIPs': true, 'lanNetworks': true, 'extraWhiteList': true},
+          'shadowsocks': oldSS
+        }
+        profiles.push(profile)
+      }
+      if (oldSSR.address && oldSSR.address !== '123.123.123.123') {
+        const profile = {
+          'name': '配置xx',
+          'mode': 'blacklist',
+          'proxies': 'ssr',
+          'relayUDP': false,
+          'enableTunnelDns': true,
+          'selectedBL': {'gfwDomains': true, 'extraBlackList': true},
+          'selectedWL': {'chinaIPs': true, 'lanNetworks': true, 'extraWhiteList': true},
+          'shadowsocksr': oldSSR
+        }
+        profiles.push(profile)
+      }
+      if (oldKT.address && oldKT.address !== '123.123.123.123') {
+        const profile = {
+          'name': '配置tt',
+          'mode': 'whitelist',
+          'proxies': 'ssKt',
+          'relayUDP': false,
+          'enableTunnelDns': true,
+          'selectedBL': {'gfwDomains': true, 'extraBlackList': true},
+          'selectedWL': {'chinaIPs': true, 'lanNetworks': true, 'extraWhiteList': true},
+          'shadowsocks': oldSS,
+          'kcptun': oldKT
+        }
+        profiles.push(profile)
+      }
+      if (profiles.length !== 0) {
+        newCfg.profiles.profiles = profiles
+      }
+      newCfg.host.configDir = this.config.host.configDir
+      this.config = newCfg
+      await this.installNwWatchdog()
+    }
   }
   async copyTemplate (fileName) {
     const template = path.join(__dirname, '..', 'config', fileName)
