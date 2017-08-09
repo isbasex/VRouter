@@ -1092,13 +1092,15 @@ EOF`
       ws.end()
       return promise
     }
+
+    const customDns = '127.0.0.1#5151'
     if (profile.selectedBL.gfwDomains) {
       const gfwDomains = await this.getCfgContent(this.config.firewall.gfwDomains)
       gfwDomains.split('\n').forEach((line) => {
         const trimLine = line.trim()
         if (!/^#/ig.test(trimLine) && !/^$/ig.test(trimLine)) {
           if (profile.enableTunnelDns) {
-            ws.write(`server=/${trimLine}/${DNSs[1]}\n`)
+            ws.write(`server=/${trimLine}/${customDns}\n`)
           }
           ws.write(`ipset=/${trimLine}/${this.config.firewall.ipsets.black}\n`)
         }
@@ -1114,7 +1116,7 @@ EOF`
           const ip = /^\d+\.\d+\.\d+\.\d+$/g
           if (!ip.test(trimLine)) {
             if (profile.enableTunnelDns) {
-              ws.write(`server=/${trimLine}/${DNSs[1]}\n`)
+              ws.write(`server=/${trimLine}/${customDns}\n`)
             }
             ws.write(`ipset=/${trimLine}/${this.config.firewall.ipsets.black}\n`)
           }
