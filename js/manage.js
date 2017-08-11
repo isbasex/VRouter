@@ -141,7 +141,13 @@ const myApp = new Vue({
       }
       winston.error(err)
       this.errorMsg = err.toString()
-      $(this.$refs.errorModal).modal('show')
+      $(this.$refs.errorModal)
+        .modal({
+          dimmerSettings: {
+            opacity: 0.8
+          }
+        })
+        .modal('show')
     },
     toggleProfileEditor (action = 'show') {
       this.resetProxiesDropdown()
@@ -150,12 +156,26 @@ const myApp = new Vue({
       $(this.$refs.profileModal)
         .modal({
           dimmerSettings: {
-            opacity: 0.2
+            opacity: 0.8
           },
           detachable: false,
           closable: false
         })
         .modal(action)
+    },
+    showImportProfileModal () {
+      document.querySelector('#importProfileModal input').value = ''
+      const label = document.querySelector('#importProfileModal div.label')
+      label.innerHTML = ''
+      label.classList.add('hidden')
+      $('#importProfileModal')
+        .modal({
+          dimmerSettings: {
+            opacity: 0.8
+          },
+          detachable: false
+        })
+        .modal('show')
     },
     newProfile () {
       this.editingProfile = {
@@ -235,8 +255,16 @@ const myApp = new Vue({
         duration: 10
       })
     },
-    async importProfile () {
-      // TODO:
+    importProfile () {
+      const uri = document.querySelector('#importProfileModal input').value
+      try {
+        this.editingProfile = vrouter.parseProfileURI(uri)
+        this.toggleProfileEditor('show')
+      } catch (error) {
+        const label = document.querySelector('#importProfileModal div.label')
+        label.innerHTML = error
+        label.classList.remove('hidden')
+      }
     },
     async saveProfile () {
       // save: proxies, mode, BWList
@@ -468,6 +496,11 @@ const myApp = new Vue({
     async showLoginModal () {
       $('*[data-content]').popup('hide')
       $(this.$refs.loginModal)
+        .modal({
+          dimmerSettings: {
+            opacity: 0.8
+          }
+        })
         .modal('show')
     },
     openLogFile () {
@@ -478,7 +511,13 @@ const myApp = new Vue({
       return getCurrentWindow().toggleDevTools()
     },
     showAboutModal () {
-      $(this.$refs.aboutModal).modal('show')
+      $(this.$refs.aboutModal)
+        .modal({
+          dimmerSettings: {
+            opacity: 0.8
+          }
+        })
+        .modal('show')
     },
     goToHomepage () {
       return shell.openExternal('https://github.com/icymind/VRouter')
@@ -592,16 +631,26 @@ document.addEventListener('DOMContentLoaded', async () => {
   $('.tabular.menu .item').tab()
   $('.dropdown').dropdown()
   $('*[data-content]').popup()
-  $('#profileModal').modal({
-    dimmerSettings: {
-      opacity: 0.2
-    },
-    detachable: false,
-    closable: false
-  })
+  // $('#profileModal').modal({
+    // dimmerSettings: {
+      // opacity: 0.2
+    // },
+    // detachable: false,
+    // closable: false
+  // })
+  // $('#importProfileModal').modal({
+    // dimmerSettings: {
+      // opacity: 0.2
+    // },
+    // detachable: false
+  // })
   $('#profiles .ui.message').dimmer({
     opacity: 0,
     on: 'hover',
     duration: 10
   })
+  $('#add-profile')
+    .dropdown({
+      on: 'hover'
+    })
 })
